@@ -60,6 +60,14 @@ async function sendSupportTicket({ senderEmail, subject, message }) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+    // Nodemailer's default connectionTimeout is 2 minutes - found via a
+    // real E2E test hanging for 60s+ with no response at all. If outbound
+    // SMTP is blocked/slow (common on hosting platforms) or the Gmail App
+    // Password is wrong, this now fails in ~10s with a real error instead
+    // of hanging the whole request indefinitely.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
   try {
