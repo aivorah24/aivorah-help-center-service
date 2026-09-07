@@ -1,8 +1,17 @@
 const Groq = require('groq-sdk');
 const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const SUPPORT_TEAM_EMAIL = 'aivorah24@gmail.com';
+
+// Resend (HTTP API) primary, Gmail SMTP fallback - same pattern already
+// proven working in aivorah-students-service/services/mailer.js. Raw Gmail
+// SMTP alone was found to hang/fail on Render (outbound SMTP appears
+// blocked on this platform's free tier) via a real E2E test timing out at
+// 60s+; Resend is HTTP-based and unaffected by that restriction.
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const FROM_EMAIL = 'Aivorah <noreply@aivorah.ai>';
 
 const SYSTEM_PROMPT = `You are Aivorah's 24/7 Support Assistant — a friendly, helpful support agent for the Aivorah learning platform.
 
@@ -52,11 +61,42 @@ async function getChatReply(message) {
 
 async function sendSupportTicket({ senderEmail, subject, message }) {
   const { EMAIL_USER, EMAIL_PASS } = process.env;
-  if (!EMAIL_USER || !EMAIL_PASS) {
-    return { success: false, error: 'Email service not configured. Set EMAIL_USER and EMAIL_PASS.' };
+  if (!resend && (!EMAIL_USER || !EMAIL_PASS)) {
+    return { success: false, error: 'Email service not configured. Set RESEND_API_KEY (or EMAIL_USER/EMAIL_PASS).' };
   }
 
   const timestamp = new Date().toISOString();
+  const bodyText = [
+    'New support ticket submitted.',
+    '',
+    `Sender Email: ${senderEmail || 'Not provided'}`,
+    `Subject: ${subject}`,
+    'Message:',
+    message,
+    '',
+    `Timestamp: ${timestamp}`,
+  ].join('\n');
+
+  if (resend) {
+    try {
+      const { error } = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: SUPPORT_TEAM_EMAIL,
+        replyTo: senderEmail || undefined,
+        subject: `[Aivorah Support Ticket] ${subject}`,
+        text: bodyText,
+      });
+      if (error) throw new Error(error.message);
+      return { success: true, message: 'Support ticket submitted successfully.' };
+    } catch (err) {
+      console.error('Support ticket email error (resend):', err.message);
+      if (!EMAIL_USER || !EMAIL_PASS) {
+        return { success: false, error: 'Failed to submit support ticket. Please try again.' };
+      }
+      // fall through to Gmail SMTP fallback below
+    }
+  }
+
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: EMAIL_USER, pass: EMAIL_PASS },
@@ -76,21 +116,12 @@ async function sendSupportTicket({ senderEmail, subject, message }) {
       to: SUPPORT_TEAM_EMAIL,
       replyTo: senderEmail || undefined,
       subject: `[Aivorah Support Ticket] ${subject}`,
-      text: [
-        'New support ticket submitted.',
-        '',
-        `Sender Email: ${senderEmail || 'Not provided'}`,
-        `Subject: ${subject}`,
-        'Message:',
-        message,
-        '',
-        `Timestamp: ${timestamp}`,
-      ].join('\n'),
+      text: bodyText,
     });
 
     return { success: true, message: 'Support ticket submitted successfully.' };
   } catch (err) {
-    console.error('Support ticket email error:', err.message);
+    console.error('Support ticket email error (gmail):', err.message);
     return { success: false, error: 'Failed to submit support ticket. Please try again.' };
   }
 }
