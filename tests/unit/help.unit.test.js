@@ -74,7 +74,7 @@ describe('sendSupportTicket', () => {
 
     const result = await sendSupportTicket({ senderEmail: 'a@a.com', subject: 'S', message: 'M' });
 
-    expect(result).toEqual({ success: false, error: 'Email service not configured. Set EMAIL_USER and EMAIL_PASS.' });
+    expect(result).toEqual({ success: false, error: 'Email service not configured. Set RESEND_API_KEY (or EMAIL_USER/EMAIL_PASS).' });
     expect(mockSendMail).not.toHaveBeenCalled();
   });
 
